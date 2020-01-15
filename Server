@@ -1,0 +1,385 @@
+using System;
+
+using System.Net;
+
+using System.Net.Sockets;
+
+using System.Text;
+
+using System.Threading;
+
+using System.Windows.Forms;
+
+namespace TCPServerClientApplication
+
+{
+
+    public partial class ServerSide : Form
+
+    {
+
+        delegate void SetTextCallback(string text);
+
+        private string ipAddress = "";
+
+        private int port = 13000;
+
+        private int portForClient = 0;
+
+        private string ipAddressForClient = "";
+
+        int clientLimit = 5;
+
+        private TcpListener[] listener;
+
+        private TcpClient[] client;
+
+        private NetworkStream[] ns;
+
+        private Thread thread = null;
+
+        private int counter = 0;
+
+        public ServerSide()
+
+        {
+
+            listener = new TcpListener[clientLimit];
+
+            client = new TcpClient[clientLimit];
+
+            ns = new NetworkStream[clientLimit];
+
+            InitializeComponent();
+
+            StartConnectionButton.Hide();
+
+            ipAddress = GetIPAddress();
+
+            informationBox.Text += $"{Environment.NewLine}Current IP address is: {ipAddress}.{Environment.NewLine}";
+
+            informationBox.Text += $"Current assigned port is: {port}{Environment.NewLine}";
+
+            informationBox.Text += $"Current client limit is: {clientLimit - 1}{Environment.NewLine}";
+
+        }
+
+        #region SendAvailablePort
+
+        private void PortButton_Click(object sender, EventArgs e)
+
+        {
+
+            Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+            IPEndPoint ep = new IPEndPoint(IPAddress.Parse(ipAddress), port);
+
+            ipAddressForClient = GetIPAddress();
+
+            portForClient = GetAvailablePort();
+
+            try
+
+            {
+
+                s.Connect(ep);
+
+                s.Send(Encoding.ASCII.GetBytes(portForClient.ToString()), 0, portForClient.ToString().Length, SocketFlags.None);
+
+                s.Close();
+
+                Console.WriteLine("Server sent available port.");
+
+                StartConnectionButton.Show();
+
+            }
+
+            catch(Exception ex)
+
+            {
+
+                Console.WriteLine("Error: " + ex);
+
+            }
+
+        }
+
+        private int GetAvailablePort()
+
+        {
+
+            TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+
+            listener.Start();
+
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+            listener.Stop();
+
+            informationBox.Text += $"Current assigned port is: {port}{Environment.NewLine}";
+
+            return port;
+
+        }
+
+        private string GetIPAddress()
+
+        {
+
+            IPHostEntry ipEntry = Dns.GetHostEntry(Dns.GetHostName());
+
+            IPAddress[] address = ipEntry.AddressList;
+
+            return address[address.Length - 1].ToString();
+
+        }
+
+        #endregion
+
+        private void StartConnectionButton_Click(object sender, EventArgs e)
+
+        {
+
+            counter++;
+
+            if(counter <= clientLimit - 1)
+
+            {
+
+                thread = new Thread(delegate () { DisplayClientData(counter); });
+
+                thread.Start();
+
+                Console.WriteLine($"Client #{counter} is started on the port #{portForClient}");
+
+                informationBox.Text += $"Client #{counter} is started on the port #{portForClient}";
+
+            }
+
+            else
+
+            {
+
+                Console.WriteLine($"Max client limit.");
+
+            }
+
+        }
+
+        private delegate void HideButtonDel();
+
+        public void DisplayClientData(int counter)
+
+        {
+
+            StartConnectionButton.Invoke(new HideButtonDel(StartConnectionButton.Hide));
+
+            listener[counter] = new TcpListener(IPAddress.Parse(ipAddress), portForClient);
+
+            listener[counter].Start();
+
+            client[counter] = listener[counter].AcceptTcpClient();
+
+            ns[counter] = client[counter].GetStream();
+
+            byte[] bytes = new byte[1024];
+
+            while (true)
+
+            {
+
+                try
+
+                {
+
+                    int bytesRead = ns[counter].Read(bytes, 0, bytes.Length);
+
+                    SetText(Encoding.ASCII.GetString(bytes, 0, bytesRead));
+
+                }
+
+                catch(Exception ex)
+
+                {
+
+                    Console.WriteLine("Error: " + ex);
+
+                }
+
+            }
+
+        }
+
+        private void SetText(string text)
+
+        {
+
+            if (this.MessageFromClientTextBox.InvokeRequired)
+
+            {
+
+                SetTextCallback del = new SetTextCallback(SetText);
+
+                this.Invoke(del, new string[] { text });
+
+            }
+
+            else
+
+            {
+
+                this.MessageFromClientTextBox.Text += text + Environment.NewLine;
+
+            }
+
+        }
+
+        private void ServerSide_FormClosed(object sender, FormClosedEventArgs e)
+
+        {
+
+            foreach(var c in client)
+
+            {
+
+                if(c != null)
+
+                    c.Close();
+
+            }
+
+            foreach (var l in listener)
+
+            {
+
+                if (l != null)
+
+                    l.Stop();
+
+            }
+
+        }
+
+    }
+
+}
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Windows.Forms;
+namespace TCPClientApplication
+{
+    public partial class ClientSide : Form
+    {
+        //IP Address is local.
+        private string ipAddress = "";
+        private int clientPort = 0;
+
+        private TcpClient client;
+        private NetworkStream ns;
+
+        public ClientSide()
+        {
+            InitializeComponent();
+            SendTextButton.Hide();
+            DataToSendTextBox.Hide();
+            ConnectServerButton.Hide();
+        }
+
+        #region RequestAndAssignNewPort
+        int port = 13000;
+        Socket requestPortListener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+        private void RequestPortButton_Click(object sender, EventArgs e)
+        {
+            ipAddress = GetIPAddress();
+            RequestForPort();
+            RequestPortButton.Hide();
+            ConnectServerButton.Show();
+        }
+
+        private string GetIPAddress()
+        {
+            IPHostEntry ipEntry = Dns.GetHostEntry(Dns.GetHostName());
+            IPAddress[] address = ipEntry.AddressList;
+
+            return address[address.Length - 1].ToString();
+        }
+
+        private void RequestForPort()
+        {
+            IPEndPoint ep = new IPEndPoint(IPAddress.Parse(ipAddress), port);
+
+            requestPortListener.Bind(ep);
+            requestPortListener.Listen(100);
+
+            Console.WriteLine("Client requested an available port.");
+            Socket serverPortReply = default(Socket);
+            serverPortReply = requestPortListener.Accept();
+
+            Thread clientThread = new Thread(new ThreadStart(() => ConnectedClient(serverPortReply, requestPortListener)));
+            clientThread.Start();
+        }
+
+        private void ConnectedClient(Socket serverPortReply, Socket requestPortListener)
+        {
+            byte[] messageFromServer = new byte[1024];
+            int size = serverPortReply.Receive(messageFromServer);
+            string assignedPort = Encoding.ASCII.GetString(messageFromServer, 0, size);
+
+            clientPort = int.Parse(assignedPort);
+            Console.WriteLine(assignedPort + " is assigned as new port");
+
+            serverPortReply.Close();
+            requestPortListener.Close();
+        }
+        #endregion
+
+        private void ConnectServerButton_Click(object sender, EventArgs e)
+        {
+            RequestPortButton.Hide();
+            ConnectServerButton.Hide();
+            SendTextButton.Show();
+            DataToSendTextBox.Show();
+
+            try
+            {
+                client = new TcpClient(ipAddress, clientPort);
+                ns = client.GetStream();
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine("Error: " + ex);
+            }
+        }
+
+        private void SendTextButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string dataToSend = DataToSendTextBox.Text;
+                byte[] byteTime = Encoding.ASCII.GetBytes(dataToSend);
+                ns.Write(byteTime, 0, byteTime.Length);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: " + ex);
+            }
+        }
+
+        private void ClientSide_FormClosed(object sender, FormClosedEventArgs e)
+        {
+            ns.Close();
+            client.Close();
+        }
+    }
+}
